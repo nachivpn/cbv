@@ -91,20 +91,20 @@ freshWk = drop idWk
 freshWk[_] = λ {Γ} a → freshWk {Γ} {a}
 
 wkVar : Γ ⊆ Γ' → Var Γ a → Var Γ' a
-wkVar (drop e) v        = succ (wkVar e v)
-wkVar (keep e) zero     = zero
-wkVar (keep e) (succ v) = succ (wkVar e v)
+wkVar (drop w) v        = succ (wkVar w v)
+wkVar (keep w) zero     = zero
+wkVar (keep w) (succ v) = succ (wkVar w v)
 
 wkTm : Γ ⊆ Γ' → Tm Γ a → Tm Γ' a
 wkTm w (var x)        = var (wkVar w x)
-wkTm e (lam t)        = lam (wkTm (keep e) t)
-wkTm e (app t u)      = app (wkTm e t) (wkTm e u)
-wkTm e (let-in t u)   = let-in (wkTm e t) (wkTm (keep e) u)
-wkTm e unit           = unit
-wkTm e print          = print
-wkTm e (inl t)        = inl (wkTm e t)
-wkTm e (inr t)        = inr (wkTm e t)
-wkTm e (case t u₁ u₂) = case (wkTm e t) (wkTm (keep e) u₁) (wkTm (keep e) u₂)
+wkTm w (lam t)        = lam (wkTm (keep w) t)
+wkTm w (app t u)      = app (wkTm w t) (wkTm w u)
+wkTm w (let-in t u)   = let-in (wkTm w t) (wkTm (keep w) u)
+wkTm w unit           = unit
+wkTm w print          = print
+wkTm w (inl t)        = inl (wkTm w t)
+wkTm w (inr t)        = inr (wkTm w t)
+wkTm w (case t u₁ u₂) = case (wkTm w t) (wkTm (keep w) u₁) (wkTm (keep w) u₂)
 
 ------------------
 -- Model artifacts
@@ -155,7 +155,7 @@ module Model
 
   -- Filinski's extension operator
   _⋆_ : 𝒯 A Γ → (A ⇒' 𝒯 B) Γ → 𝒯 B Γ
-  e ⋆ f = bind-int f idWk e
+  w ⋆ f = bind-int f idWk w
 
   -- interpretation of types
   Tm'- : Ty → (Ctx → Set)
@@ -305,9 +305,9 @@ module ResidualisingMonad where
   bind f x = join (fmap f x)
 
   fmap-int : (A ⇒' B) →̇ (𝒞 A ⇒' 𝒞 B)
-  fmap-int f e (ret x)            = ret (f e x)
-  fmap-int f e (let-app-in x n m) = let-app-in x n (fmap-int f (drop e) m)
-  fmap-int f e (case x m₁ m₂)     = case x (fmap-int f (drop e) m₁) (fmap-int f (drop e) m₂)
+  fmap-int f w (ret x)            = ret (f w x)
+  fmap-int f w (let-app-in x n m) = let-app-in x n (fmap-int f (drop w) m)
+  fmap-int f w (case x m₁ m₂)     = case x (fmap-int f (drop w) m₁) (fmap-int f (drop w) m₂)
 
   bind-int : (A ⇒' 𝒞 B) →̇ (𝒞 A ⇒' 𝒞 B)
   bind-int f w (ret x)            = f w x
