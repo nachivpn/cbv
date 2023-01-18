@@ -21,9 +21,9 @@ private
   variable
     Γ Γ' Δ Δ' Θ Θ' : Ctx
 
-------------------------------------
--- Variables, terms and substituions
-------------------------------------
+---------------------------------
+-- Variables, terms and weakening
+---------------------------------
 
 data Var : Ctx → Ty → Set where
   zero : Var (Γ `, a) a
@@ -48,32 +48,34 @@ data Tm : Ctx → Ty → Set where
          → Tm Γ b
 
   unit  : Tm Γ Unit
+
   print : Tm Γ (String ⇒ Unit)
 
+-- Order-preserving embeddings (OPEs)
 data _⊆_  : Ctx → Ctx → Set where
   base   : [] ⊆ []
   drop   : (w : Γ ⊆ Δ) → Γ ⊆ Δ `, a
   keep   : (w : Γ ⊆ Δ) → Γ `, a ⊆ Δ `, a
 
--- weakening is reflexive
+-- identity OPE
 idWk[_] : (Γ : Ctx) → Γ ⊆ Γ
 idWk[_] []        = base
 idWk[_] (Γ `, _a) = keep  idWk[ Γ ]
 
 idWk = λ {Γ} → idWk[ Γ ]
 
--- weakening is transitive (or can be composed)
+-- composition of OPEs
 _∙_ : Θ ⊆ Δ → Δ ⊆ Γ → Θ ⊆ Γ
 w       ∙ base     = w
 w       ∙ drop  w' = drop  (w ∙ w')
 drop  w ∙ keep  w' = drop  (w ∙ w')
 keep  w ∙ keep  w' = keep  (w ∙ w')
 
--- weakening that "generates a fresh variable"
-fresh : Γ ⊆ Γ `, a
-fresh = drop idWk
+-- OPE used to weaken the context with a fresh variable
+freshWk : Γ ⊆ Γ `, a
+freshWk = drop idWk
 
-fresh[_] = λ {Γ} a → fresh {Γ} {a}
+freshWk[_] = λ {Γ} a → freshWk {Γ} {a}
 
 wkVar : Γ ⊆ Γ' → Var Γ a → Var Γ' a
 wkVar (drop e) v        = succ (wkVar e v)
@@ -88,31 +90,36 @@ wkTm e (let-in t u) = let-in (wkTm e t) (wkTm (keep e) u)
 wkTm e unit         = unit
 wkTm e print        = print
 
+---------------
+-- Normal forms
+---------------
+
 data At : Ctx → Ty → Set
 data Nv : Ctx → Ty → Set
 data Nc : Ctx → Ty → Set
 
+-- Atoms
 data At where
   var   : Var Γ a → At Γ a
   print : At Γ (String ⇒ Unit)
 
+-- Normal values
 data Nv where
   str   : At Γ String → Nv Γ String
   unit  : Nv Γ Unit
   lam   : Nc (Γ `, a) b → Nv Γ (a ⇒ b)
 
+-- Normal computations
 data Nc where
   ret          : Nv Γ a → Nc Γ a
   let-app-in   : At Γ (a ⇒ b) → Nv Γ a → Nc (Γ `, b) c → Nc Γ c
 
--- embedding into terms
-
 embAt : At Γ a → Tm Γ a
-embNv : Nv Γ a → Tm Γ a
-embNc : Nc Γ a → Tm Γ a
-
 embAt (var x) = var x
 embAt print   = print
+
+embNv : Nv Γ a → Tm Γ a
+embNc : Nc Γ a → Tm Γ a
 
 embNv (str x) = embAt x
 embNv unit    = unit
@@ -120,8 +127,6 @@ embNv (lam x) = lam (embNc x)
 
 embNc (ret x)            = embNv x
 embNc (let-app-in x n c) = let-in (app (embAt x) (embNv n)) (embNc c)
-
--- weakening lemmas
 
 wkAt : Γ ⊆ Γ' → At Γ a → At Γ' a
 wkAt w (var x) = var (wkVar w x)
@@ -137,6 +142,16 @@ wkNv w (lam m) = lam (wkNc (keep w) m)
 wkNc w (ret x)            = ret (wkNv w x)
 wkNc w (let-app-in x n m) = let-app-in (wkAt w x) (wkNv w n) (wkNc (keep w) m)
 
+------------
+-- NbE Model
+------------
+
+open import Data.Unit  using (⊤ ; tt)
+open import Data.Product  using (Σ ; _×_ ; _,_)
+
+variable
+  A B C : Ctx → Set
+
 Var- Tm- At- Nv- Nc- : Ty → Ctx → Set
 Var- a Γ = Var Γ a
 At- a Γ = At Γ a
@@ -144,122 +159,125 @@ Tm- a Γ = Tm Γ a
 Nv- a Γ = Nv Γ a
 Nc- a Γ = Nc Γ a
 
-------------
--- NbE Model
-------------
-open import Data.Unit  using (⊤ ; tt)
-open import Data.Product  using (Σ ; _×_ ; _,_)
-
-variable
-  A B C : Ctx → Set
-
 -- family of maps between interpretations
 _→̇_ : (Ctx → Set) → (Ctx → Set) → Set
 _→̇_ A B = {Δ : Ctx} → A Δ → B Δ
 
 infixr 10 _→̇_
 
--- constructions on context-indexed families of sets
+-- exponential family
 _⇒'_ : (Ctx → Set) → (Ctx → Set) → (Ctx → Set)
 _⇒'_ A B Γ = {Γ' : Ctx} → Γ ⊆ Γ' → A Γ' → B Γ'
 
+-- product family
 _×'_ : (Ctx → Set) → (Ctx → Set) → (Ctx → Set)
 _×'_ A B Γ = A Γ × B Γ
 
+-- unit family
 ⊤' : (Ctx → Set)
 ⊤' = λ Γ → ⊤
 
-data Lets (A : Ctx → Set) : Ctx → Set where
-  ret        : A →̇ Lets A
-  let-app-in : At Γ (a ⇒ b) → Nv Γ a → Lets A (Γ `, b) → Lets A Γ
+-- a monad on families
+module _ where
 
-module _ (wkA : {Δ Δ' : Ctx} → Δ ⊆ Δ' → A Δ → A Δ') where
-  wkLets : Γ ⊆ Γ' → Lets A Γ → Lets A Γ'
-  wkLets w (ret x)            = ret (wkA w x)
-  wkLets w (let-app-in x n c) = let-app-in (wkAt w x) (wkNv w n) (wkLets (keep w) c)
+  -- data structure used to define a monad on families
+  data Lets (A : Ctx → Set) : Ctx → Set where
+    ret        : A →̇ Lets A
+    let-app-in : At Γ (a ⇒ b) → Nv Γ a → Lets A (Γ `, b) → Lets A Γ
 
+  module _ (wkA : {Δ Δ' : Ctx} → Δ ⊆ Δ' → A Δ → A Δ') where
+    wkLets : Γ ⊆ Γ' → Lets A Γ → Lets A Γ'
+    wkLets w (ret x)            = ret (wkA w x)
+    wkLets w (let-app-in x n c) = let-app-in (wkAt w x) (wkNv w n) (wkLets (keep w) c)
+
+  join : Lets (Lets A) →̇ Lets A
+  join (ret x)              = x
+  join (let-app-in x n m) = let-app-in x n (join m)
+
+  fmap : (A →̇ B) → (Lets A →̇ Lets B)
+  fmap f (ret x) = ret (f x)
+  fmap f (let-app-in x n m) = let-app-in x n (fmap f m)
+
+  bind : (A →̇ Lets B) → (Lets A →̇ Lets B)
+  bind f x = join (fmap f x)
+
+  _≫=_ : Lets A Γ → (A →̇ Lets B) → Lets B Γ
+  _≫=_ x f = bind f x
+
+  fmap-int : (A ⇒' B) →̇ (Lets A ⇒' Lets B)
+  fmap-int f e (ret x) = ret (f e x)
+  fmap-int f e (let-app-in x x₁ m) = let-app-in x x₁ (fmap-int f (drop e) m)
+
+  bind-int : (A ⇒' Lets B) →̇ (Lets A ⇒' Lets B)
+  bind-int f w (ret x) = f w x
+  bind-int f w (let-app-in x x₁ m) = let-app-in x x₁ (bind-int f (drop w) m)
+
+  [_]_⋆₂_ : Γ ⊆ Γ' → Lets A Γ' → (A ⇒' Lets B) Γ → Lets B Γ'
+  [ w ] e ⋆₂ f = bind-int f w e
+
+  -- Filinski's extension operator
+  _⋆_ : Lets A Γ → (A ⇒' Lets B) Γ → Lets B Γ
+  e ⋆ f = [ idWk ] e ⋆₂ f
+
+  -- (special case of) Filinski's γᵍʳ
+  disperse : Nc- a →̇ Lets (Nv- a)
+  disperse (ret nv)           = ret nv
+  disperse (let-app-in x n m) = let-app-in x n (disperse m)
+
+  -- (special case of) Filinski's collect
+  collect : Lets (Nv- a) →̇ Nc- a
+  collect (ret nv)           = ret nv
+  collect (let-app-in x n m) = let-app-in x n (collect m)
+
+  -- Filinski's bind
+  register-let-app : At Γ (a ⇒ b) → Nv Γ a → Lets (Var- b) Γ
+  register-let-app x nv = let-app-in x nv (ret zero)
+
+  --
+  run : Lets (Nc- a) →̇ Nc- a
+  run m = collect (join (fmap disperse m))
+
+------------
+-- NbE model
+------------
+
+-- interpretation of types
 Tm'- : Ty → (Ctx → Set)
 Tm'- Unit    = ⊤'
 Tm'- String  = At- String
 Tm'- (a ⇒ b) = Tm'- a ⇒' Lets (Tm'- b)
 
+-- interpretation of contexts
 Sub'- : Ctx → (Ctx → Set)
 Sub'- []       = ⊤'
 Sub'- (Γ `, a) = Sub'- Γ ×' Tm'- a
 
--- values in the model can be weakened
+-- monotonicity lemma
 wkTm'- : Γ ⊆ Γ' → Tm'- a Γ → Tm'- a Γ'
 wkTm'- {a = Unit}   w x = x
 wkTm'- {a = String} w n = wkAt w n
 wkTm'- {a = a ⇒ b}  w f = λ w' y → f (w ∙ w') y
 
--- substitutions in the model can be weakened
+-- monotonicity lemma
 wkSub'- : Γ ⊆ Γ' → Sub'- Δ Γ → Sub'- Δ Γ'
 wkSub'- {Δ = []}     w tt      = tt
 wkSub'- {Δ = Δ `, a} w (s , x) = wkSub'- {Δ = Δ} w s , wkTm'- {a = a} w x
 
-join : Lets (Lets A) →̇ Lets A
-join (ret x)              = x
-join (let-app-in x x₁ x₂) = let-app-in x x₁ (join x₂)
-
-fmap : (A →̇ B) → (Lets A →̇ Lets B)
-fmap f (ret x) = ret (f x)
-fmap f (let-app-in x x₁ m) = let-app-in x x₁ (fmap f m)
-
-bind : (A →̇ Lets B) → (Lets A →̇ Lets B)
-bind f x = join (fmap f x)
-
-_≫=_ : Lets A Γ → (A →̇ Lets B) → Lets B Γ
-_≫=_ x f = bind f x
-
-fmap-int : (A ⇒' B) →̇ (Lets A ⇒' Lets B)
-fmap-int f e (ret x) = ret (f e x)
-fmap-int f e (let-app-in x x₁ m) = let-app-in x x₁ (fmap-int f (drop e) m)
-
-bind-int : (A ⇒' Lets B) →̇ (Lets A ⇒' Lets B)
-bind-int f w (ret x) = f w x
-bind-int f w (let-app-in x x₁ m) = let-app-in x x₁ (bind-int f (drop w) m)
-
-[_]_⋆₂_ : Γ ⊆ Γ' → Lets A Γ' → (A ⇒' Lets B) Γ → Lets B Γ'
-[ w ] e ⋆₂ f = bind-int f w e
-
--- Filinski's extension operator
-_⋆_ : Lets A Γ → (A ⇒' Lets B) Γ → Lets B Γ
-e ⋆ f = [ idWk ] e ⋆₂ f
-
 reflect : At- a →̇ Lets (Tm'- a)
 reify   : Tm'- a →̇ Nc- a
-
--- Filinski's bind
-reg-let-app : At Γ (a ⇒ b) → Nv Γ a → Lets (Var- b) Γ
-reg-let-app x nv = let-app-in x nv (ret zero)
-
--- (special case of) Filinski's γᵍʳ
-disperse : Nc- a →̇ Lets (Nv- a)
-disperse (ret nv)           = ret nv
-disperse (let-app-in x n m) = let-app-in x n (disperse m)
-
--- (special case of) Filinski's collect
-collect : Lets (Nv- a) →̇ Nc- a
-collect (ret nv)           = ret nv
-collect (let-app-in x n m) = let-app-in x n (collect m)
-
---
-runLets : Lets (Nc- a) →̇ Nc- a
-runLets m = collect (join (fmap disperse m))
 
 reflect {Unit}   x = ret tt
 reflect {String} x = ret x
 reflect {a ⇒ b}  x = ret
   (λ w xa → disperse {a} (reify xa)
-    ⋆ λ w'   nva → reg-let-app (wkAt (w ∙ w') x) nva
-    ⋆ λ _w'' vb → reflect (var vb))
+    ⋆ λ w'  nva → register-let-app (wkAt (w ∙ w') x) nva
+    ⋆ λ w'' vb → reflect (var vb))
 
 reify {Unit}   tt = ret unit
 reify {String} x  = ret (str x)
 reify {a ⇒ b}  f  = ret (lam (collect
   (reflect (var zero)
-    ⋆ λ w  xa → f (fresh ∙ w) xa
+    ⋆ λ w  xa → f (freshWk ∙ w) xa
     ⋆ λ w' xb → disperse (reify xb))))
 
 -- interpretation of variables
@@ -279,8 +297,8 @@ eval {Γ} print        s = reflect print
 idₛ : Lets (Sub'- Γ) Γ
 idₛ {[]}     = ret tt
 idₛ {Γ `, a} = reflect (var zero)
-  ⋆ λ w x → wkLets (wkSub'- {Δ = Γ}) (fresh ∙ w) idₛ
+  ⋆ λ w x → wkLets (wkSub'- {Δ = Γ}) (freshWk ∙ w) idₛ
   ⋆ λ w' s → ret (s , (wkTm'- {a = a} w' x))
 
 norm : Tm- a →̇ Nc- a
-norm t = runLets (fmap reify (bind (eval t) idₛ))
+norm t = run (fmap reify (bind (eval t) idₛ))
