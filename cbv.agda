@@ -279,7 +279,7 @@ Nc- a Γ = Nc Γ a
 module ResidualisingMonad where
 
   -- data structure used to define a monad on families ('𝒞' for "cover", following Abel)
-  -- (identical to Lindley's "free" monad)
+  -- (similar to Lindley's "free" monad)
   data 𝒞 (A : Ctx → Set) : Ctx → Set where
     ret        : A →̇ 𝒞 A
     let-app-in : At Γ (a ⇒ b) → Nv Γ a → 𝒞 A (Γ `, b) → 𝒞 A Γ
