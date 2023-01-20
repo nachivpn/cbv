@@ -147,7 +147,7 @@ module Model
   -- these parameters interpret base types (Filinski's ℬ function)
   (String' : Ctx → Set)
   (wkString' : {Γ Γ' : Ctx} → Γ ⊆ Γ' → String' Γ → String' Γ')
-  -- these parameters are that of the monad (Filinski's Tʳ monad)
+  -- these parameters are that of a monad (Filinski's T monad)
   (𝒯 : (Ctx → Set) → (Ctx → Set))
   (η  : {A : Ctx → Set} → A →̇ 𝒯 A)
   (bind-int : {A B : Ctx → Set} → (A ⇒' 𝒯 B) →̇ (𝒯 A ⇒' 𝒯 B))
@@ -276,7 +276,58 @@ Nc- a Γ = Nc Γ a
 -- NbE model
 ------------
 
-module ResidualisingMonad where
+module NbEModel
+  -- Parameters that require a "residualising" monad
+  (𝒯ʳ : (Ctx → Set) → (Ctx → Set))
+  (wk𝒯ʳ : {A : Ctx → Set} → ({Δ Δ' : Ctx} → Δ ⊆ Δ' → A Δ → A Δ') → {Γ Γ' : Ctx} → Γ ⊆ Γ' → 𝒯ʳ A Γ → 𝒯ʳ A Γ')
+  (η   : {A : Ctx → Set} → A →̇ 𝒯ʳ A)
+  (bind-int : {A B : Ctx → Set} → (A ⇒' 𝒯ʳ B) →̇ (𝒯ʳ A ⇒' 𝒯ʳ B))
+  (register-let-app : {Γ : Ctx} {a b : Ty} → At Γ (a ⇒ b) → Nv Γ a → 𝒯ʳ (Var- b) Γ)
+  (register-case : {Γ : Ctx} {a b : Ty} → At Γ (a + b) → 𝒯ʳ (Var- a ⊎' Var- b) Γ)
+  (collect : {a : Ty} → 𝒯ʳ (Nv- a) →̇ Nc- a)
+  where
+
+  open Model (At- String) wkAt 𝒯ʳ η bind-int
+
+  reflect : At- a →̇ 𝒯ʳ (Tm'- a)
+  reify   : Tm'- a →̇ Nv- a
+
+  reflect {Unit}   x = η tt
+  reflect {String} x = η x
+  reflect {a ⇒ b}  x = η
+    λ {_} w xa → register-let-app (wkAt w x) (reify xa)
+    ⋆ λ w'' vb → reflect (var vb)
+  reflect {a + b} x  = register-case x
+    ⋆ λ { w (inj₁ v) → reflect (var v) ⋆ λ w' z → η (inj₁ z)
+        ; w (inj₂ v) → reflect (var v) ⋆ λ w' z → η (inj₂ z) }
+
+  reify {Unit}   tt      = unit
+  reify {String} x       = str x
+  reify {a ⇒ b}  f       = lam (collect
+    (reflect (var zero)
+      ⋆ λ w  xa → f (freshWk ∙ w) xa
+      ⋆ λ w' xb → η (reify xb)))
+  reify {a + b} (inj₁ x) = inl (reify x)
+  reify {a + b} (inj₂ y) = inr (reify y)
+
+  idₛ : 𝒯ʳ (Sub'- Γ) Γ
+  idₛ {[]}     = η tt
+  idₛ {Γ `, a} = reflect (var zero)
+    ⋆ λ w x → wk𝒯ʳ (wkSub'- {Δ = Γ}) (freshWk ∙ w) idₛ
+    ⋆ λ w' s → η (s , (wkTm'- {a = a} w' x))
+
+  quot : (Sub'- Γ →̇ 𝒯ʳ (Tm'- a)) → Tm Γ a
+  quot f = embNc (collect
+    (idₛ
+    ⋆ λ w s → f s
+    ⋆ λ w' x → η (reify x)))
+
+  open Eval (reflect print)
+
+  norm : Tm- a →̇ Tm- a
+  norm t = quot (eval t)
+
+module ResidualisingCoverMonad where
 
   -- data structure used to define a monad on families ('𝒞' for "cover", following Abel)
   -- (similar to Lindley's "free" monad)
@@ -328,51 +379,9 @@ module ResidualisingMonad where
   register-case : At Γ (a + b) → 𝒞 (Var- a ⊎' Var- b) Γ
   register-case x = case x (ret (inj₁ zero)) (ret (inj₂ zero))
 
--- A "residualising" monad has the following exported operations.
--- Observe that it can be defined in ways other than 𝒞.
--- For e.g., it could have been defined using continuations (as in Filinski)
-open ResidualisingMonad
-  using (𝒞 ; wk𝒞 ; bind-int
-        ; register-let-app ; register-case
-        ; collect)
-  renaming (ret to η)
+open ResidualisingCoverMonad
 
-open Model (At- String) wkAt 𝒞 η bind-int
-
-reflect : At- a →̇ 𝒞 (Tm'- a)
-reify   : Tm'- a →̇ Nv- a
-
-reflect {Unit}   x = η tt
-reflect {String} x = η x
-reflect {a ⇒ b}  x = η
-  λ w xa → register-let-app (wkAt w x) (reify xa)
-  ⋆ λ w'' vb → reflect (var vb)
-reflect {a + b} x  = register-case x
-  ⋆ λ { w (inj₁ v) → reflect (var v) ⋆ λ w' z → η (inj₁ z)
-      ; w (inj₂ v) → reflect (var v) ⋆ λ w' z → η (inj₂ z) }
-
-reify {Unit}   tt      = unit
-reify {String} x       = str x
-reify {a ⇒ b}  f       = lam (collect
-  (reflect (var zero)
-    ⋆ λ w  xa → f (freshWk ∙ w) xa
-    ⋆ λ w' xb → η (reify xb)))
-reify {a + b} (inj₁ x) = inl (reify x)
-reify {a + b} (inj₂ y) = inr (reify y)
-
-idₛ : 𝒞 (Sub'- Γ) Γ
-idₛ {[]}     = η tt
-idₛ {Γ `, a} = reflect (var zero)
-  ⋆ λ w x → wk𝒞 (wkSub'- {Δ = Γ}) (freshWk ∙ w) idₛ
-  ⋆ λ w' s → η (s , (wkTm'- {a = a} w' x))
-
-open Eval (reflect print)
-
-norm : Tm- a →̇ Nc- a
-norm t = collect
-  (idₛ
-  ⋆ λ w s → eval t s
-  ⋆ λ w' x → η (reify x))
+open NbEModel 𝒞 wk𝒞 ret bind-int register-let-app register-case collect
 
 -------------------------
 -- References and related
