@@ -314,12 +314,6 @@ module ResidualisingMonad where
   bind-int f w (let-app-in x n m) = let-app-in x n (bind-int f (drop w) m)
   bind-int f w (case x m₁ m₂)     = case x (bind-int f (drop w) m₁) (bind-int f (drop w) m₂)
 
-  -- (special case of) Filinski's γᵍʳ
-  disperse : Nc- a →̇ 𝒞 (Nv- a)
-  disperse (ret nv)           = ret nv
-  disperse (let-app-in x n m) = let-app-in x n (disperse m)
-  disperse (case x m₁ m₂)     = case x (disperse m₁) (disperse m₂)
-
   -- (special case of) Filinski's collect
   collect : 𝒞 (Nv- a) →̇ Nc- a
   collect (ret nv)           = ret nv
@@ -334,46 +328,37 @@ module ResidualisingMonad where
   register-case : At Γ (a + b) → 𝒞 (Var- a ⊎' Var- b) Γ
   register-case x = case x (ret (inj₁ zero)) (ret (inj₂ zero))
 
-  --
-  run : 𝒞 (Nc- a) →̇ Nc- a
-  run m = collect (join (fmap disperse m))
-
 -- A "residualising" monad has the following exported operations.
 -- Observe that it can be defined in ways other than 𝒞.
 -- For e.g., it could have been defined using continuations (as in Filinski)
 open ResidualisingMonad
   using (𝒞 ; wk𝒞 ; bind-int
         ; register-let-app ; register-case
-        ; disperse ; collect ; run)
+        ; collect)
   renaming (ret to η)
 
 open Model (At- String) wkAt 𝒞 η bind-int
 
 reflect : At- a →̇ 𝒞 (Tm'- a)
-reify   : Tm'- a →̇ Nc- a
+reify   : Tm'- a →̇ Nv- a
 
 reflect {Unit}   x = η tt
 reflect {String} x = η x
 reflect {a ⇒ b}  x = η
-  (λ w xa → disperse {a} (reify xa)
-    ⋆ λ w'  nva → register-let-app (wkAt (w ∙ w') x) nva
-    ⋆ λ w'' vb → reflect (var vb))
+  λ w xa → register-let-app (wkAt w x) (reify xa)
+  ⋆ λ w'' vb → reflect (var vb)
 reflect {a + b} x  = register-case x
   ⋆ λ { w (inj₁ v) → reflect (var v) ⋆ λ w' z → η (inj₁ z)
       ; w (inj₂ v) → reflect (var v) ⋆ λ w' z → η (inj₂ z) }
 
-reify {Unit}   tt      = ret unit
-reify {String} x       = ret (str x)
-reify {a ⇒ b}  f       = ret (lam (collect
+reify {Unit}   tt      = unit
+reify {String} x       = str x
+reify {a ⇒ b}  f       = lam (collect
   (reflect (var zero)
     ⋆ λ w  xa → f (freshWk ∙ w) xa
-    ⋆ λ w' xb → disperse (reify xb))))
-reify {a + b} (inj₁ x) = collect
-  (disperse (reify {a} x)
-  ⋆ (λ w nv → η (inl nv)))
-reify {a + b} (inj₂ y) = collect
-  (disperse (reify {b} y)
-  ⋆ (λ w nv → η (inr nv)))
+    ⋆ λ w' xb → η (reify xb)))
+reify {a + b} (inj₁ x) = inl (reify x)
+reify {a + b} (inj₂ y) = inr (reify y)
 
 idₛ : 𝒞 (Sub'- Γ) Γ
 idₛ {[]}     = η tt
@@ -384,7 +369,7 @@ idₛ {Γ `, a} = reflect (var zero)
 open Eval (reflect print)
 
 norm : Tm- a →̇ Nc- a
-norm t = run
+norm t = collect
   (idₛ
   ⋆ λ w s → eval t s
   ⋆ λ w' x → η (reify x))
