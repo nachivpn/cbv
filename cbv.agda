@@ -284,7 +284,7 @@ module NbEModel
   (bind-int : {A B : Ctx → Set} → (A ⇒' 𝒯ʳ B) →̇ (𝒯ʳ A ⇒' 𝒯ʳ B))
   (register-let-app : {Γ : Ctx} {a b : Ty} → At Γ (a ⇒ b) → Nv Γ a → 𝒯ʳ (Var- b) Γ)
   (register-case : {Γ : Ctx} {a b : Ty} → At Γ (a + b) → 𝒯ʳ (Var- a ⊎' Var- b) Γ)
-  (collect : {a : Ty} → 𝒯ʳ (Nv- a) →̇ Nc- a)
+  (run : {a : Ty} → 𝒯ʳ (Nv- a) →̇ Nc- a)
   where
 
   open Model (At- String) wkAt 𝒯ʳ η bind-int
@@ -303,7 +303,7 @@ module NbEModel
 
   reify {Unit}   tt      = unit
   reify {String} x       = str x
-  reify {a ⇒ b}  f       = lam (collect
+  reify {a ⇒ b}  f       = lam (run
     (reflect (var zero)
       ⋆ λ w  xa → f (freshWk ∙ w) xa
       ⋆ λ w' xb → η (reify xb)))
@@ -317,7 +317,7 @@ module NbEModel
     ⋆ λ w' s → η (s , (wkTm'- {a = a} w' x))
 
   quot : (Sub'- Γ →̇ 𝒯ʳ (Tm'- a)) → Tm Γ a
-  quot f = embNc (collect
+  quot f = embNc (run
     (idₛ
     ⋆ λ w s → f s
     ⋆ λ w' x → η (reify x)))
@@ -365,11 +365,11 @@ module ResidualisingCoverMonad where
   bind-int f w (let-app-in x n m) = let-app-in x n (bind-int f (drop w) m)
   bind-int f w (case x m₁ m₂)     = case x (bind-int f (drop w) m₁) (bind-int f (drop w) m₂)
 
-  -- (special case of) Filinski's collect
-  collect : 𝒞 (Nv- a) →̇ Nc- a
-  collect (ret nv)           = ret nv
-  collect (let-app-in x n m) = let-app-in x n (collect m)
-  collect (case x m₁ m₂)     = case x (collect m₁) (collect m₂)
+  -- Filinski's collect
+  run : 𝒞 (Nv- a) →̇ Nc- a
+  run (ret nv)           = ret nv
+  run (let-app-in x n m) = let-app-in x n (run m)
+  run (case x m₁ m₂)     = case x (run m₁) (run m₂)
 
   -- Filinski's bind
   register-let-app : At Γ (a ⇒ b) → Nv Γ a → 𝒞 (Var- b) Γ
@@ -381,7 +381,7 @@ module ResidualisingCoverMonad where
 
 open ResidualisingCoverMonad
 
-open NbEModel 𝒞 wk𝒞 ret bind-int register-let-app register-case collect
+open NbEModel 𝒞 wk𝒞 ret bind-int register-let-app register-case run
 
 -------------------------
 -- References and related
