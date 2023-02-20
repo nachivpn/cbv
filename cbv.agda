@@ -149,6 +149,7 @@ module Model
   (wkString' : {Γ Γ' : Ctx} → Γ ⊆ Γ' → String' Γ → String' Γ')
   -- these parameters are that of a monad (Filinski's T monad)
   (𝒯 : (Ctx → Set) → (Ctx → Set))
+  (wk𝒯 : {A : Ctx → Set} → ({Δ Δ' : Ctx} → Δ ⊆ Δ' → A Δ → A Δ') → {Γ Γ' : Ctx} → Γ ⊆ Γ' → 𝒯 A Γ → 𝒯 A Γ')
   (η  : {A : Ctx → Set} → A →̇ 𝒯 A)
   (bind-int : {A B : Ctx → Set} → (A ⇒' 𝒯 B) →̇ (𝒯 A ⇒' 𝒯 B))
   where
@@ -165,9 +166,9 @@ module Model
   Tm'- (a + b) = Tm'- a ⊎' Tm'- b
 
   -- interpretation of contexts
-  Sub'- : Ctx → (Ctx → Set)
-  Sub'- []       = ⊤'
-  Sub'- (Γ `, a) = Sub'- Γ ×' Tm'- a
+  Env'- : Ctx → (Ctx → Set)
+  Env'- []       = ⊤'
+  Env'- (Γ `, a) = Env'- Γ ×' 𝒯 (Tm'- a)
 
   -- monotonicity lemma
   wkTm'- : Γ ⊆ Γ' → Tm'- a Γ → Tm'- a Γ'
@@ -177,12 +178,12 @@ module Model
   wkTm'- {a = a + b}  w x = [ inj₁ ∘ wkTm'- {a = a} w , inj₂ ∘ wkTm'- {a = b} w ] x
 
   -- monotonicity lemma
-  wkSub'- : Γ ⊆ Γ' → Sub'- Δ Γ → Sub'- Δ Γ'
-  wkSub'- {Δ = []}     w tt      = tt
-  wkSub'- {Δ = Δ `, a} w (s , x) = wkSub'- {Δ = Δ} w s , wkTm'- {a = a} w x
+  wkEnv'- : Γ ⊆ Γ' → Env'- Δ Γ → Env'- Δ Γ'
+  wkEnv'- {Δ = []}     w tt      = tt
+  wkEnv'- {Δ = Δ `, a} w (s , x) = wkEnv'- {Δ = Δ} w s , wk𝒯 (wkTm'- {a = a}) w x
 
   -- interpretation of variables
-  lookup' : Var Γ a → (Sub'- Γ →̇ Tm'- a)
+  lookup' : Var Γ a → (Env'- Γ →̇ 𝒯 (Tm'- a))
   lookup' zero     (_ , x) = x
   lookup' (succ x) (γ , _) = lookup' x γ
 
@@ -190,18 +191,18 @@ module Model
   module Eval (print' : {Γ : Ctx} → 𝒯 (Tm'- (String ⇒ Unit)) Γ) where
 
     -- interpretation of terms
-    eval : Tm Γ a → (Sub'- Γ →̇ 𝒯 (Tm'- a))
-    eval {Γ} (var x)        s = η (lookup' x s)
-    eval {Γ} (lam t)        s = η (λ {_} w x → eval t ((wkSub'- {Δ = Γ} w s) , x))
-    eval {Γ} (app t u)      s = eval t s ⋆ (λ w f → eval u (wkSub'- {Δ = Γ} w s) ⋆ f)
-    eval {Γ} (let-in t u)   s = eval t s ⋆ (λ w x → eval u (wkSub'- {Δ = Γ} w s , x))
+    eval : Tm Γ a → (Env'- Γ →̇ 𝒯 (Tm'- a))
+    eval {Γ} (var x)        s = lookup' x s
+    eval {Γ} (lam t)        s = η (λ {_} w x → eval t ((wkEnv'- {Δ = Γ} w s) , η x))
+    eval {Γ} (app t u)      s = eval t s ⋆ (λ w f → eval u (wkEnv'- {Δ = Γ} w s) ⋆ f)
+    eval {Γ} (let-in t u)   s = eval t s ⋆ (λ w x → eval u (wkEnv'- {Δ = Γ} w s , η x))
     eval {Γ} unit           s = η tt
     eval {Γ} print          s = print'
     eval {Γ} (inl t)        s = eval t s ⋆ λ w x → η (inj₁ x)
     eval {Γ} (inr t)        s = eval t s ⋆ λ w x → η (inj₂ x)
     eval {Γ} (case t u₁ u₂) s = eval t s
-      ⋆ λ { w (inj₁ x) → eval u₁ (wkSub'- {Δ = Γ} w s , x)
-          ; w (inj₂ y) → eval u₂ (wkSub'- {Δ = Γ} w s , y) }
+      ⋆ λ { w (inj₁ x) → eval u₁ (wkEnv'- {Δ = Γ} w s , η x)
+          ; w (inj₂ y) → eval u₂ (wkEnv'- {Δ = Γ} w s , η y) }
 
 ---------------
 -- Normal forms
@@ -287,7 +288,7 @@ module NbEModel
   (run : {a : Ty} → 𝒯ʳ (Nv- a) →̇ Nc- a)
   where
 
-  open Model (At- String) wkAt 𝒯ʳ η bind-int
+  open Model (At- String) wkAt 𝒯ʳ wk𝒯ʳ η bind-int
 
   reflect : At- a →̇ 𝒯ʳ (Tm'- a)
   reify   : Tm'- a →̇ Nv- a
@@ -310,17 +311,14 @@ module NbEModel
   reify {a + b} (inj₁ x) = inl (reify x)
   reify {a + b} (inj₂ y) = inr (reify y)
 
-  idₛ : 𝒯ʳ (Sub'- Γ) Γ
-  idₛ {[]}     = η tt
-  idₛ {Γ `, a} = reflect (var zero)
-    ⋆ λ w x → wk𝒯ʳ (wkSub'- {Δ = Γ}) (freshWk ∙ w) idₛ
-    ⋆ λ w' s → η (s , (wkTm'- {a = a} w' x))
+  idEnv'[_] : (Γ : Ctx) → Env'- Γ Γ
+  idEnv'[ [] ]     = tt
+  idEnv'[ Γ `, a ] = wkEnv'- {Δ = Γ} freshWk idEnv'[ Γ ] , reflect (var zero)
 
-  quot : (Sub'- Γ →̇ 𝒯ʳ (Tm'- a)) → Tm Γ a
-  quot f = embNc (run
-    (idₛ
-    ⋆ λ w s → f s
-    ⋆ λ w' x → η (reify x)))
+  quot : (Env'- Γ →̇ 𝒯ʳ (Tm'- a)) → Tm Γ a
+  quot {Γ} f = embNc (run
+    (f idEnv'[ Γ ]
+      ⋆ λ w' x → η (reify x)))
 
   open Eval (reflect print)
 
@@ -355,15 +353,18 @@ module ResidualisingCoverMonad where
   bind : (A →̇ 𝒞 B) → (𝒞 A →̇ 𝒞 B)
   bind f x = join (fmap f x)
 
+  join-int : ⊤' →̇ 𝒞 (𝒞 A) ⇒' 𝒞 A
+  join-int t w (ret m)            = m
+  join-int t w (let-app-in x n m) = let-app-in x n (join-int t (drop w) m)
+  join-int t w (case x m₁ m₂)     = case x (join-int tt (drop w) m₁) (join-int t (drop w) m₂)
+
   fmap-int : (A ⇒' B) →̇ (𝒞 A ⇒' 𝒞 B)
   fmap-int f w (ret x)            = ret (f w x)
   fmap-int f w (let-app-in x n m) = let-app-in x n (fmap-int f (drop w) m)
   fmap-int f w (case x m₁ m₂)     = case x (fmap-int f (drop w) m₁) (fmap-int f (drop w) m₂)
 
   bind-int : (A ⇒' 𝒞 B) →̇ (𝒞 A ⇒' 𝒞 B)
-  bind-int f w (ret x)            = f w x
-  bind-int f w (let-app-in x n m) = let-app-in x n (bind-int f (drop w) m)
-  bind-int f w (case x m₁ m₂)     = case x (bind-int f (drop w) m₁) (bind-int f (drop w) m₂)
+  bind-int f w m = join-int tt w (fmap-int f w m)
 
   -- Filinski's collect
   run : 𝒞 (Nv- a) →̇ Nc- a
@@ -381,7 +382,65 @@ module ResidualisingCoverMonad where
 
 open ResidualisingCoverMonad
 
-open NbEModel 𝒞 wk𝒞 ret bind-int register-let-app register-case run
+open NbEModel 𝒞 wk𝒞 ret bind-int register-let-app register-case run public
+
+-----------
+-- Examples
+-----------
+
+pattern Bool = Unit + Unit
+
+-- a sample context
+Gamma = [] `, Bool {- 2 -} `, String {- 1 -} `, String {- 0 -}
+
+pattern x0 = zero
+pattern x1 = succ x0
+pattern x2 = succ x1
+pattern x3 = succ x2
+pattern x4 = succ x3
+
+-- (λ. print x2) (print x0)
+ex0 : Tm Gamma Unit
+ex0 = app (lam (app print (var x2))) (app print (var x0))
+
+-- λ. λ. λ. case x2 of { _ -> x1 ; _ -> x2 }
+ifte : Tm Gamma (Bool ⇒ (a ⇒ (a ⇒ a)))
+ifte = lam (lam (lam (case (var x2) (var x1) (var x2))))
+
+-- let t in u
+_︔_ : Tm Gamma a → Tm Gamma b → Tm Gamma b
+t ︔ u = let-in t (wkTm freshWk u)
+
+-- To understand the problem of "redundant case analysis", consider
+-- the examples below:
+
+red-case : Tm Gamma Unit
+red-case = app (app (app ifte (var x2)) (app print (var x0))) (app print (var x1))
+
+red-case' : Tm Gamma Unit
+red-case' = app print (var x0) ︔ app print (var x1)
+
+-- We would like for these examples to be equal when normalized, but
+-- they currently aren't. This can be achieved by redefining normal
+-- forms to avoid redundant branches and refining 𝒞. A tedious
+-- endeavour in Agda, but achievable nevertheless.
+
+-- Similarly, the problem of "repeated case analysis" is illustrated
+-- below:
+
+repeated-case : Tm Gamma Unit
+repeated-case = case (var x2)
+  (case (var x3)
+    (app print (var x2))
+    (app print (var x3))) -- never taken
+  (case (var x3)
+    (app print (var x2))  -- never taken
+    (app print (var x3)))
+
+repeated-case' : Tm Gamma Unit
+repeated-case' = case (var x2)
+  (app print (var x1))
+  (app print (var x2))
 
 -------------------------
 -- References and related
