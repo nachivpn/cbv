@@ -132,8 +132,8 @@ _×'_ : (Ctx → Set) → (Ctx → Set) → (Ctx → Set)
 _×'_ A B Γ = A Γ × B Γ
 
 -- sum family
-_⊎'_ : (Ctx → Set) → (Ctx → Set) → (Ctx → Set)
-_⊎'_ A B Γ = A Γ ⊎ B Γ
+_+'_ : (Ctx → Set) → (Ctx → Set) → (Ctx → Set)
+_+'_ A B Γ = A Γ ⊎ B Γ
 
 -- unit family
 ⊤' : (Ctx → Set)
@@ -163,7 +163,7 @@ module Model
   Tm'- Unit    = ⊤'
   Tm'- String  = String'
   Tm'- (a ⇒ b) = (Tm'- a) ⇒' 𝒯 (Tm'- b)
-  Tm'- (a + b) = Tm'- a ⊎' Tm'- b
+  Tm'- (a + b) = Tm'- a +' Tm'- b
 
   -- interpretation of contexts
   Env'- : Ctx → (Ctx → Set)
@@ -284,46 +284,47 @@ module NbEModel
   (η   : {A : Ctx → Set} → A →̇ 𝒯ʳ A)
   (bind-int : {A B : Ctx → Set} → (A ⇒' 𝒯ʳ B) →̇ (𝒯ʳ A ⇒' 𝒯ʳ B))
   (register-let-app : {Γ : Ctx} {a b : Ty} → At Γ (a ⇒ b) → Nv Γ a → 𝒯ʳ (Var- b) Γ)
-  (register-case : {Γ : Ctx} {a b : Ty} → At Γ (a + b) → 𝒯ʳ (Var- a ⊎' Var- b) Γ)
+  (register-case : {Γ : Ctx} {a b : Ty} → At Γ (a + b) → 𝒯ʳ (Var- a +' Var- b) Γ)
   (run : {a : Ty} → 𝒯ʳ (Nv- a) →̇ Nc- a)
   where
 
   open Model (At- String) wkAt 𝒯ʳ wk𝒯ʳ η bind-int
 
-  reflect : At- a →̇ 𝒯ʳ (Tm'- a)
-  reify   : Tm'- a →̇ Nv- a
+  reflect  : At- a →̇ 𝒯ʳ (Tm'- a)
+  reifyVal : Tm'- a →̇ Nv- a
 
   reflect {Unit}   x = η tt
   reflect {String} x = η x
   reflect {a ⇒ b}  x = η
-    λ {_} w xa → register-let-app (wkAt w x) (reify xa)
+    λ {_} w xa → register-let-app (wkAt w x) (reifyVal xa)
     ⋆ λ w'' vb → reflect (var vb)
   reflect {a + b} x  = register-case x
     ⋆ λ { w (inj₁ v) → reflect (var v) ⋆ λ w' z → η (inj₁ z)
         ; w (inj₂ v) → reflect (var v) ⋆ λ w' z → η (inj₂ z) }
 
-  reify {Unit}   tt      = unit
-  reify {String} x       = str x
-  reify {a ⇒ b}  f       = lam (run
+  reifyVal {Unit}   tt      = unit
+  reifyVal {String} x       = str x
+  reifyVal {a ⇒ b}  f       = lam (run
     (reflect (var zero)
       ⋆ λ w  xa → f (freshWk ∙ w) xa
-      ⋆ λ w' xb → η (reify xb)))
-  reify {a + b} (inj₁ x) = inl (reify x)
-  reify {a + b} (inj₂ y) = inr (reify y)
+      ⋆ λ w' xb → η (reifyVal xb)))
+  reifyVal {a + b} (inj₁ x) = inl (reifyVal x)
+  reifyVal {a + b} (inj₂ y) = inr (reifyVal y)
+
+  reify : Tm'- a →̇ 𝒯ʳ (Nv- a)
+  reify x = η (reifyVal x)
 
   idEnv'[_] : (Γ : Ctx) → Env'- Γ Γ
   idEnv'[ [] ]     = tt
   idEnv'[ Γ `, a ] = wkEnv'- {Δ = Γ} freshWk idEnv'[ Γ ] , reflect (var zero)
 
   quot : (Env'- Γ →̇ 𝒯ʳ (Tm'- a)) → Tm Γ a
-  quot {Γ} f = embNc (run
-    (f idEnv'[ Γ ]
-      ⋆ λ w' x → η (reify x)))
+  quot {Γ} f = embNc (run (f idEnv'[ Γ ] ⋆ λ w' x → reify x))
 
   open Eval (reflect print)
 
-  norm : Tm- a →̇ Tm- a
-  norm t = quot (eval t)
+  norm : Tm Γ a → Tm Γ a
+  norm = quot ∘ eval
 
 module ResidualisingCoverMonad where
 
@@ -377,7 +378,7 @@ module ResidualisingCoverMonad where
   register-let-app x nv = let-app-in x nv (ret zero)
 
   -- Filinski's binds
-  register-case : At Γ (a + b) → 𝒞 (Var- a ⊎' Var- b) Γ
+  register-case : At Γ (a + b) → 𝒞 (Var- a +' Var- b) Γ
   register-case x = case x (ret (inj₁ zero)) (ret (inj₂ zero))
 
 open ResidualisingCoverMonad
